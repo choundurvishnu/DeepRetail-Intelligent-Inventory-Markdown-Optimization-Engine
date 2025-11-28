@@ -74,7 +74,7 @@ from utils.data_processor import (
 )
 from utils.forecasting import (
     SalesForecaster, calculate_inventory_recommendations, calculate_optimal_markdown,
-    prepare_prediction_input
+    prepare_prediction_input, PriceElasticityModel, InventoryOptimizer, get_mlflow_experiments
 )
 
 def init_session_state():
@@ -401,15 +401,19 @@ def render_forecasting():
     store characteristics, and external factors.
     """)
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         model_type = st.selectbox(
             "Select Model Type",
-            options=['random_forest', 'gradient_boosting'],
-            format_func=lambda x: 'Random Forest' if x == 'random_forest' else 'Gradient Boosting'
+            options=['lightgbm', 'random_forest', 'gradient_boosting'],
+            format_func=lambda x: {'lightgbm': 'LightGBM (Recommended)', 
+                                   'random_forest': 'Random Forest',
+                                   'gradient_boosting': 'Gradient Boosting'}[x]
         )
     with col2:
         test_size = st.slider("Test Set Size", 0.1, 0.4, 0.2, 0.05)
+    with col3:
+        experiment_name = st.text_input("MLflow Experiment Name", "sales_forecasting")
     
     if st.button("Train Forecasting Model", type="primary"):
         with st.spinner("Preparing features and training model..."):
@@ -417,7 +421,7 @@ def render_forecasting():
             
             if y is not None and len(y) > 0:
                 forecaster = SalesForecaster(model_type=model_type)
-                metrics = forecaster.train(X, y, test_size=test_size)
+                metrics = forecaster.train(X, y, test_size=test_size, experiment_name=experiment_name)
                 
                 st.session_state.forecaster = forecaster
                 st.session_state.model_trained = True
@@ -576,6 +580,97 @@ def render_markdown_optimization():
     fig.update_yaxes(title_text='Total Markdown ($)', secondary_y=False)
     fig.update_yaxes(title_text='Avg Weekly Sales ($)', secondary_y=True)
     st.plotly_chart(fig, use_container_width=True)
+    
+    st.divider()
+    
+    st.subheader("Price Elasticity Analysis")
+    st.markdown("""
+    Analyze how markdown discounts affect sales using price elasticity modeling.
+    A higher elasticity means customers are more responsive to price changes.
+    """)
+    
+    if st.button("Calculate Price Elasticity", key="elasticity_btn"):
+        with st.spinner("Fitting price elasticity model..."):
+            elasticity_model = PriceElasticityModel(method='ridge')
+            elasticities = elasticity_model.fit(df)
+            
+            if elasticities:
+                st.session_state.elasticity_model = elasticity_model
+                summary = elasticity_model.get_elasticity_summary()
+                
+                if summary is not None and len(summary) > 0:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        fig = px.bar(summary, x='Markdown_Type', y='Elasticity',
+                                    title='Price Elasticity by Markdown Type',
+                                    color='Elasticity',
+                                    color_continuous_scale='RdYlGn')
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        st.dataframe(summary, use_container_width=True)
+                    
+                    most_elastic = summary.loc[summary['Elasticity'].abs().idxmax()]
+                    st.markdown(f"""
+                    <div class="insight-box">
+                        <h4>📊 Elasticity Insight</h4>
+                        <p><strong>{most_elastic['Markdown_Type']}</strong> has the highest price elasticity ({most_elastic['Elasticity']:.3f}), 
+                        meaning customers are most responsive to this type of discount. 
+                        {most_elastic['Effect']}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Unable to calculate price elasticity. Ensure markdown data is available.")
+    
+    st.divider()
+    
+    st.subheader("Markdown Strategy Optimizer")
+    st.markdown("Use SciPy optimization to find the optimal markdown strategy for clearance items.")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        initial_price = st.number_input("Initial Price ($)", min_value=1.0, value=100.0)
+    with col2:
+        inventory_level = st.number_input("Inventory Units", min_value=1, value=500)
+    with col3:
+        weeks_remaining = st.number_input("Weeks to Clear", min_value=1, max_value=52, value=8)
+    with col4:
+        demand_elasticity = st.slider("Demand Elasticity", 0.5, 3.0, 1.5, 0.1)
+    
+    if st.button("Optimize Markdown", key="optimize_md_btn"):
+        optimizer = InventoryOptimizer()
+        result = optimizer.optimize_markdown_timing(
+            initial_price=initial_price,
+            demand_elasticity=demand_elasticity,
+            inventory_level=inventory_level,
+            weeks_remaining=weeks_remaining
+        )
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Optimal Markdown", f"{result['optimal_markdown_pct']:.1f}%")
+        with col2:
+            st.metric("New Price", f"${result['new_price']:.2f}")
+        with col3:
+            st.metric("Expected Demand Lift", f"+{result['expected_demand_lift']:.1f}%")
+        
+        if result['optimal_markdown_pct'] < 10:
+            recommendation = "Hold current price - markdown not recommended yet"
+            color = "#28a745"
+        elif result['optimal_markdown_pct'] < 30:
+            recommendation = "Moderate markdown recommended to stimulate demand"
+            color = "#ffc107"
+        else:
+            recommendation = "Aggressive markdown recommended for clearance"
+            color = "#dc3545"
+        
+        st.markdown(f"""
+        <div style="background: {color}20; border-left: 4px solid {color}; padding: 1rem; margin-top: 1rem; border-radius: 0 8px 8px 0;">
+            <h4 style="margin: 0; color: {color};">Recommendation</h4>
+            <p style="margin: 0.5rem 0 0 0;">{recommendation}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 def render_inventory_optimization():
     st.header("📦 Inventory Optimization")
