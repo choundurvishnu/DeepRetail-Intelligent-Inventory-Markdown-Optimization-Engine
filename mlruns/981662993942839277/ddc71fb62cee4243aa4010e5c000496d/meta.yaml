@@ -1,0 +1,14 @@
+artifact_uri: /home/runner/workspace/mlruns/981662993942839277/ddc71fb62cee4243aa4010e5c000496d/artifacts
+end_time: 1764314905746
+entry_point_name: ''
+experiment_id: '981662993942839277'
+lifecycle_stage: active
+run_id: ddc71fb62cee4243aa4010e5c000496d
+run_name: monumental-gull-698
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1764314890718
+status: 3
+tags: []
+user_id: choun
